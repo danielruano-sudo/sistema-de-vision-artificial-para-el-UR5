@@ -1,0 +1,337 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>UR5 Vision Control — OpenCV</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#0f1117;color:#e0e0e0;min-height:100vh;padding:20px}
+  .header{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px}
+  h1{font-size:18px;font-weight:500;color:#fff}
+  .badges{display:flex;gap:8px;align-items:center}
+  .badge{font-size:12px;padding:4px 10px;border-radius:20px;font-weight:500}
+  .ws-ok  {background:#0d3320;color:#4ade80}
+  .ws-err {background:#3a0d0d;color:#f87171}
+  .ws-conn{background:#2a2a00;color:#facc15}
+  .r-idle   {background:#0d3320;color:#4ade80}
+  .r-moving {background:#1a2a00;color:#a3e635}
+  .r-error  {background:#3a0d0d;color:#f87171}
+
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px}
+  .card{background:#1a1d27;border:1px solid #2a2d3a;border-radius:12px;overflow:hidden}
+  .card-header{padding:8px 14px;border-bottom:1px solid #2a2d3a;font-size:12px;color:#888;display:flex;align-items:center;gap:6px}
+  .live{width:7px;height:7px;border-radius:50%;background:#4ade80;margin-left:auto;animation:pulse 2s infinite;display:none}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+
+  #cam-wrap{aspect-ratio:4/3;background:#080a0f;display:flex;align-items:center;justify-content:center;position:relative}
+  #cam-img{width:100%;height:100%;object-fit:contain;display:none}
+  #cam-ph{text-align:center;color:#333;font-size:13px}
+  #cam-ph svg{display:block;margin:0 auto 8px;opacity:.3}
+
+  .det-pills{display:flex;gap:6px;padding:8px 14px;border-top:1px solid #2a2d3a;min-height:36px;align-items:center}
+  .pill{font-size:11px;padding:3px 10px;border-radius:20px;font-weight:500}
+  .pill-blue{background:#1e3a5f;color:#93c5fd}
+  .pill-red {background:#3a1010;color:#fca5a5}
+  .pill-none{color:#444;font-size:11px;font-style:italic}
+
+  .info-body{padding:12px 14px;display:flex;flex-direction:column;gap:8px}
+  .irow{display:flex;justify-content:space-between;font-size:12px}
+  .irow span:first-child{color:#666}
+  .irow span:last-child{font-family:monospace;font-size:11px;color:#aaa}
+  .offline-badge{background:#14532d;color:#4ade80;font-size:11px;padding:2px 8px;border-radius:20px}
+  #last-action{font-size:11px;color:#444;font-style:italic;margin-top:4px}
+
+  .quick{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px}
+  .qbtn{font-size:12px;padding:5px 12px;cursor:pointer;border:1px solid #2a2d3a;border-radius:20px;background:#1a1d27;color:#ccc;transition:all .15s}
+  .qbtn:hover{background:#2a2d3a;color:#fff}
+
+  .chat-card{background:#1a1d27;border:1px solid #2a2d3a;border-radius:12px;margin-bottom:12px}
+  .chat-log{height:220px;overflow-y:auto;padding:12px 14px;display:flex;flex-direction:column;gap:8px}
+  .mwrap{display:flex;flex-direction:column;gap:2px}
+  .mwrap.user{align-items:flex-end}
+  .mwrap.ai  {align-items:flex-start}
+  .mwrap.sys {align-items:flex-start}
+  .bubble{max-width:85%;padding:7px 12px;border-radius:10px;font-size:13px;line-height:1.5}
+  .bubble.user{background:#1e3a5f;color:#93c5fd}
+  .bubble.ai  {background:#0d3320;color:#86efac}
+  .bubble.sys {background:#1e1e1e;color:#666;font-size:12px}
+  .atag{display:inline-block;margin-top:4px;font-size:11px;padding:2px 8px;border-radius:4px;background:rgba(255,255,255,.07);color:#888}
+  .mts{font-size:10px;color:#444}
+
+  .input-row{display:flex;gap:8px;padding:10px 14px;border-top:1px solid #2a2d3a}
+  #cmd-input{flex:1;background:#0f1117;border:1px solid #2a2d3a;border-radius:8px;padding:8px 12px;font-size:14px;color:#e0e0e0;outline:none;transition:border-color .15s}
+  #cmd-input:focus{border-color:#4ade80}
+  #send-btn{padding:8px 16px;background:#0d3320;border:1px solid #166534;border-radius:8px;color:#4ade80;font-size:13px;cursor:pointer;display:flex;align-items:center;gap:6px;white-space:nowrap;transition:all .15s}
+  #send-btn:hover:not(:disabled){background:#166534;color:#fff}
+  #send-btn:disabled{opacity:.4;cursor:not-allowed}
+  .hint{font-size:11px;color:#333;text-align:center;margin-top:8px}
+  kbd{font-size:10px;padding:1px 5px;border:1px solid #333;border-radius:3px}
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>⚙ UR5 Vision Control
+    <span style="font-size:12px;color:#4ade80;font-weight:400;margin-left:6px">
+      · OpenCV — <span class="offline-badge">sin internet</span>
+    </span>
+  </h1>
+  <div class="badges">
+    <span class="badge r-idle" id="robot-badge">Robot: en reposo</span>
+    <span class="badge ws-conn" id="ws-badge">WS: conectando...</span>
+  </div>
+</div>
+
+<div class="grid">
+  <!-- Cámara -->
+  <div class="card">
+    <div class="card-header">
+      📷 wrist_camera · detección activa
+      <span class="live" id="live-dot"></span>
+    </div>
+    <div id="cam-wrap">
+      <img id="cam-img" alt="Vista cámara UR5 con detección OpenCV" />
+      <div id="cam-ph">
+        <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+          <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/>
+          <circle cx="12" cy="13" r="4"/>
+        </svg>
+        Esperando señal de Webots...
+      </div>
+    </div>
+    <!-- Objetos detectados -->
+    <div class="det-pills" id="det-pills">
+      <span class="pill-none">Sin detecciones aún</span>
+    </div>
+  </div>
+
+  <!-- Info -->
+  <div class="card">
+    <div class="card-header">ℹ Sistema</div>
+    <div class="info-body">
+      <div class="irow"><span>Visión</span><span style="color:#4ade80">OpenCV — detección por color</span></div>
+      <div class="irow"><span>Robot</span><span>Universal Robots UR5e</span></div>
+      <div class="irow"><span>Gripper</span><span>Robotiq 2F-140</span></div>
+      <div class="irow"><span>Cámara</span><span>wrist_camera</span></div>
+      <div class="irow"><span>WebSocket</span><span>ws://localhost:8765</span></div>
+      <div class="irow"><span>Internet</span><span style="color:#4ade80">No requerido ✓</span></div>
+      <div style="border-top:1px solid #2a2d3a;padding-top:10px;margin-top:4px;font-size:12px;color:#666;line-height:2">
+        Comandos de voz:<br>
+        <span style="color:#3b82f6">● "toma el cilindro azul"</span><br>
+        <span style="color:#ef4444">■ "agarra el cubo rojo"</span><br>
+        <span style="color:#888">↩ "suelta" · "inicio" · "observa"</span>
+      </div>
+      <div id="last-action">Sin acción reciente</div>
+    </div>
+  </div>
+</div>
+
+<!-- Acciones rápidas -->
+<div class="quick" id="quick-wrap"></div>
+
+<!-- Chat -->
+<div class="chat-card">
+  <div class="chat-log" id="chat-log"></div>
+  <div class="input-row">
+    <input type="text" id="cmd-input" placeholder="Ej: toma el cilindro azul, ¿qué ves en la mesa?, suelta..." />
+    <button id="send-btn" onclick="handleSend()">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <line x1="22" y1="2" x2="11" y2="13"/>
+        <polygon points="22 2 15 22 11 13 2 9 22 2"/>
+      </svg>
+      Enviar
+    </button>
+  </div>
+</div>
+
+<p class="hint">Presiona <kbd>Enter</kbd> para enviar · OpenCV detecta objetos por color en tiempo real</p>
+
+<script>
+const WS_URL = "ws://localhost:8765";
+
+const QUICK_ACTIONS = [
+  { label:"🔵 Tomar azul",  cmd:"Toma el cilindro azul" },
+  { label:"🔴 Tomar rojo",  cmd:"Agarra el cubo rojo" },
+  { label:"📦 Soltar",      cmd:"Suelta el objeto" },
+  { label:"👁 Observar",    cmd:"Observa la escena" },
+  { label:"🏠 Inicio",      cmd:"Vuelve al inicio" },
+  { label:"❓ ¿Qué ves?",   cmd:"¿Qué ves en la mesa?" },
+];
+
+let ws = null;
+let loading = false;
+
+// Quick buttons
+const qw = document.getElementById("quick-wrap");
+QUICK_ACTIONS.forEach(({ label, cmd }) => {
+  const btn = document.createElement("button");
+  btn.className = "qbtn";
+  btn.textContent = label;
+  btn.onclick = () => {
+    document.getElementById("cmd-input").value = cmd;
+    document.getElementById("cmd-input").focus();
+  };
+  qw.appendChild(btn);
+});
+
+// WebSocket
+function connectWS() {
+  setWsBadge("conn");
+  try {
+    ws = new WebSocket(WS_URL);
+
+    ws.onopen = () => {
+      setWsBadge("ok");
+      document.getElementById("live-dot").style.display = "block";
+      addMsg("sys", "✓ Conectado al robot UR5. OpenCV activo — sin necesidad de internet.");
+      startPolling();
+    };
+
+    ws.onmessage = (e) => {
+      const data = JSON.parse(e.data);
+
+      if (data.type === "frame" && data.data) {
+        const img = document.getElementById("cam-img");
+        img.src = "data:image/jpeg;base64," + data.data;
+        img.style.display = "block";
+        document.getElementById("cam-ph").style.display = "none";
+        if (data.status) setRobotBadge(data.status);
+        if (data.detections) updateDetPills(data.detections);
+      }
+
+      if (data.type === "decision") {
+        addMsg("ai", data.message, { action: data.action });
+        document.getElementById("last-action").textContent =
+          "Última acción: " + data.action + " · " + new Date().toLocaleTimeString();
+        if (data.detections) updateDetPills(data.detections);
+        loading = false;
+        resetBtn();
+      }
+    };
+
+    ws.onclose = () => {
+      setWsBadge("err");
+      document.getElementById("live-dot").style.display = "none";
+      addMsg("sys", "⚠ Desconectado. Reconectando en 3s...");
+      setTimeout(connectWS, 3000);
+    };
+
+    ws.onerror = () => setWsBadge("err");
+  } catch {
+    setWsBadge("err");
+    setTimeout(connectWS, 3000);
+  }
+}
+
+let pollInterval = null;
+function startPolling() {
+  clearInterval(pollInterval);
+  pollInterval = setInterval(() => {
+    if (ws && ws.readyState === WebSocket.OPEN)
+      ws.send(JSON.stringify({ type: "request_frame" }));
+  }, 500);
+}
+
+function setWsBadge(s) {
+  const el = document.getElementById("ws-badge");
+  el.className = "badge";
+  if (s==="ok")   { el.classList.add("ws-ok");   el.textContent = "WS: conectado ✓"; }
+  if (s==="err")  { el.classList.add("ws-err");  el.textContent = "WS: sin conexión"; }
+  if (s==="conn") { el.classList.add("ws-conn"); el.textContent = "WS: conectando..."; }
+}
+
+function setRobotBadge(s) {
+  const el = document.getElementById("robot-badge");
+  const map = {
+    idle:   ["r-idle",   "Robot: en reposo"],
+    moving: ["r-moving", "Robot: moviéndose"],
+    error:  ["r-error",  "Robot: error"],
+  };
+  const [cls, txt] = map[s] || ["r-idle", "Robot: "+s];
+  el.className = "badge " + cls;
+  el.textContent = txt;
+}
+
+function updateDetPills(dets) {
+  const el = document.getElementById("det-pills");
+  if (!dets || (!dets.blue && !dets.red)) {
+    el.innerHTML = '<span class="pill-none">Sin detecciones</span>';
+    return;
+  }
+  let html = "";
+  if (dets.blue) html += `<span class="pill pill-blue">🔵 Azul (${dets.blue.x}, ${dets.blue.y})</span>`;
+  if (dets.red)  html += `<span class="pill pill-red">🔴 Rojo (${dets.red.x}, ${dets.red.y})</span>`;
+  el.innerHTML = html;
+}
+
+function addMsg(role, text, meta=null) {
+  const log = document.getElementById("chat-log");
+  const wrap = document.createElement("div");
+  wrap.className = "mwrap " + role;
+  const bubble = document.createElement("div");
+  bubble.className = "bubble " + role;
+  bubble.textContent = text;
+  if (meta?.action) {
+    const tag = document.createElement("div");
+    tag.className = "atag";
+    tag.textContent = "▶ " + meta.action;
+    bubble.appendChild(tag);
+  }
+  const ts = document.createElement("div");
+  ts.className = "mts";
+  ts.textContent = (role==="user"?"Tú":role==="sys"?"Sistema":"OpenCV") + " · " + new Date().toLocaleTimeString();
+  wrap.appendChild(bubble);
+  wrap.appendChild(ts);
+  log.appendChild(wrap);
+  log.scrollTop = log.scrollHeight;
+}
+
+async function handleSend() {
+  if (loading) return;
+  const inp = document.getElementById("cmd-input");
+  const txt = inp.value.trim();
+  if (!txt) return;
+
+  if (!ws || ws.readyState !== WebSocket.OPEN) {
+    addMsg("sys", "⚠ Robot desconectado. Verifica que Webots esté corriendo.");
+    return;
+  }
+
+  inp.value = "";
+  addMsg("user", txt);
+  loading = true;
+  const btn = document.getElementById("send-btn");
+  btn.disabled = true;
+  btn.textContent = "⏳ Procesando...";
+
+  ws.send(JSON.stringify({ type: "command", text: txt }));
+
+  // Timeout por si no responde
+  setTimeout(() => {
+    if (loading) {
+      loading = false;
+      resetBtn();
+      addMsg("sys", "⚠ Sin respuesta del robot. Intenta de nuevo.");
+    }
+  }, 5000);
+}
+
+function resetBtn() {
+  const btn = document.getElementById("send-btn");
+  btn.disabled = false;
+  btn.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+    <line x1="22" y1="2" x2="11" y2="13"/>
+    <polygon points="22 2 15 22 11 13 2 9 22 2"/>
+  </svg> Enviar`;
+}
+
+document.getElementById("cmd-input").addEventListener("keydown", e => {
+  if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSend(); }
+});
+
+addMsg("sys", "Sistema OpenCV iniciado. Sin necesidad de API ni internet. Conectando con Webots...");
+connectWS();
+</script>
+</body>
+</html>
